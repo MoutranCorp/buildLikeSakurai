@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sakurai UE5"
+  short_description: "Apply Sakurai's game design lens to Unreal Engine 5 work through MCP."
+  brand_color: "#2F6F61"
+  default_prompt: "$sakurai-ue5 Help me design, implement, or review a UE5 gameplay slice."
+policy:
+  allow_implicit_invocation: true
