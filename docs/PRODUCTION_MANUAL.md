@@ -30,6 +30,7 @@
 - **Part 11 — Milestone M4, Robin Hood**: the pipeline's second run, projectiles
 - **Part 12 — Milestone M5, The Versus Slice**: stage, camera, tuning, human playtests
 - **Part 13 — Milestone M6, The Trim Gate**: the director's cut pass and master quality checklists
+- **Part 14 — Milestone M7, Rollback Netcode**: turning the rollback-ready core into shipping online play
 - **Appendix A — Naming Conventions Reference**
 - **Appendix B — Agent Prompt Library**
 - **Appendix C — Frame Data Starting Values**
@@ -55,7 +56,7 @@ Be precise about what "on par with Smash Ultimate" means, because getting this w
   4. **Impact.** Hits land with layered feedback — hit-stop, reaction animation, effect, sound — that makes the result legible in a single glance (`wiki: 141`, `wiki: 035`).
   5. **Character identity.** Ten seconds of moving a character tells the player what kind of fighter they are, without text.
 
-The scope that carries this bar: **2 fighters, 1 stage, 1 mode (versus), at 60 fps locked.** Everything else is post-M6 expansion.
+The scope that carries this bar: **2 fighters, 1 stage, versus at 60 fps locked — offline first, then online with rollback netcode.** The game does not ship commercially without rollback (charter requirement). The sequencing that makes this survivable: the *simulation architecture* is rollback-ready from the first line of M0 code (§2.5.4 — cheap to do early, ruinous to retrofit), while the *netcode itself* is the final milestone, M7, built only after the offline game is great. Everything else is post-M7 expansion.
 
 ## 0.2 The Operating Model: One Director, an Agent Studio
 
@@ -93,13 +94,14 @@ Ninety percent of the labor on this project is performed by AI agents. This is n
 
 ## 0.4 The Design Law
 
-This project runs under the Sakurai lens as encoded in this repository. The five load-bearing laws, which appear as checklist items throughout this manual:
+This project runs under the Sakurai lens as encoded in this repository. The six load-bearing laws, which appear as checklist items throughout this manual:
 
 1. **Feel first, art second.** No final art effort is spent on a kit that isn't already fun as a gray mannequin.
 2. **Lead-ins snap** (`wiki: 049`). The first 1–2 frames of any attack jump hard toward the anticipation pose. Slow ease-ins are banned.
 3. **Exaggerate to survive the screen** (`wiki: 091`). If a pose reads only in close-up, it is wrong. The test is a squint at gameplay zoom.
 4. **Hitboxes are authored, never auto-fitted** (`wiki: 221`). Collision is a design statement about trust, tuned generously where the player would swear they hit.
 5. **Effects clarify, never outshine** (`wiki: 035`). The character is always the brightest read on screen.
+6. **The simulation is sacred and separable.** Gameplay state lives in a deterministic, snapshot-able simulation core (§2.5.4); everything the player sees and hears is a derived view of it. No presentation system ever writes into the simulation. This law exists because rollback netcode (M7) is a ship requirement — and it is unbuildable on a core that breaks this rule.
 
 ---
 
@@ -281,6 +283,7 @@ Create `docs/specs/` with these files (agents draft them in M0; you edit and app
 | `GAME_CHARTER.md` | Part 0 of this manual, condensed to one page: goal, quality bar, scope, division of labor. |
 | `CONVENTIONS.md` | §2.2 in full + Appendix A tables. |
 | `FRAME_DATA_SCHEMA.md` | §2.6 schema, with field-by-field semantics. |
+| `SIMULATION_CONTRACT.md` | §2.5.4 in full — the rollback-ready simulation rules every gameplay slice obeys. |
 | `QUALITY_BARS.md` | The checklists from Part 13, so agents self-check before submitting. |
 | `REVIEW_PROTOCOL.md` | Part 3.3: deliverable formats, where to put previews, notes format. |
 | `IP_GUARDRAILS.md` | §1.3. |
@@ -290,7 +293,7 @@ Create `docs/specs/` with these files (agents draft them in M0; you edit and app
 | `characters/ROB_FANTASY.md`, `characters/ROB_MOVEMENT.md` | Same for Robin Hood. |
 | `DECISIONS.md` | Append-only log: every ⚖️ decision, date, one-line rationale. Agents consult it instead of re-litigating. |
 
-Additionally, update the project `CLAUDE.md` so every session auto-loads: pointer to `docs/specs/`, the Two-Minute Rule, the five design laws (§0.4), and the standing verification requirements (§2.8).
+Additionally, update the project `CLAUDE.md` so every session auto-loads: pointer to `docs/specs/`, the Two-Minute Rule, the six design laws (§0.4) — with the rollback-ready simulation contract (§2.5.4) quoted in full, since it constrains every gameplay slice — and the standing verification requirements (§2.8).
 
 ## 2.4 Version Control Configuration
 
@@ -302,11 +305,18 @@ Additionally, update the project `CLAUDE.md` so every session auto-loads: pointe
 
 ## 2.5 Core Gameplay Architecture Decisions (⚖️ make these once, now)
 
-Agents will present prototypes for each in M0/M1; you decide by feel and record in `DECISIONS.md`:
+Agents will present prototypes for each in M0/M1; you decide by feel and record in `DECISIONS.md`. **One decision is already made by the charter and is not revisitable: the game ships with rollback netcode (M7), so the simulation core is rollback-ready from its first line.** Items 1–3 below are shaped by that; item 4 states the contract itself.
 
-1. **Movement: custom pawn movement vs. tuned CharacterMovementComponent.** Platform fighters need: instant direction reversal, precise air-drift acceleration, fast-fall, no momentum smoothing you didn't ask for, and frame-exact jump-squat. Recommendation: **custom movement component** (subclass or replace CMC) — CMC's smoothing/physics assumptions fight you forever. Have the M1 agent build the jab prototype on both and pick with the controller in your hand.
-2. **Attack system: Gameplay Ability System (GAS) vs. bespoke attack state machine.** GAS gives networking scaffolding and effect plumbing at the cost of substantial complexity agents must reason through on every change. Bespoke gives a small, fully-understood state machine (`Idle → Startup → Active → Recovery → back`, plus cancel tables) that maps 1:1 onto frame data. Recommendation for a 2-character local-versus v1: **bespoke state machine**, designed with clean seams so GAS or rollback netcode can replace the shell later. (⚖️ If online multiplayer is a v1 must-have, stop and re-plan — rollback netcode changes the architecture from day one. This manual assumes local versus for v1; record the decision.)
-3. **Physics of knockback:** deterministic custom trajectory (Smash-style: launch speed + decay + gravity, no physics engine) — not UE physics simulation. Non-negotiable for feel reproducibility; listed as a decision only so it's recorded.
+1. **Movement: fully custom simulation movement — CharacterMovementComponent is ruled out.** Platform fighters need instant direction reversal, precise air-drift acceleration, fast-fall, no momentum smoothing you didn't ask for, and frame-exact jump-squat — and rollback needs movement state that serializes to a compact struct and re-simulates deterministically. CMC fails both: its smoothing/physics assumptions fight the feel, and its internal state entanglement with the engine makes snapshot/restore a nightmare. The M1 agent builds movement as pure functions over the fighter state struct (§2.5.4); you tune it with the controller in hand.
+2. **Attack system: bespoke attack state machine — GAS is ruled out.** GAS's networking model is server-authoritative replication, which is the *wrong* scaffolding for rollback (rollback wants a locally re-simulatable deterministic core, not replicated abilities), and its internal prediction state resists snapshotting. Bespoke gives a small, fully-understood state machine (`Actionable → Startup → Active → Recovery → back`, plus cancel tables) that maps 1:1 onto frame data and serializes as plain data. Recorded as final in `DECISIONS.md`.
+3. **Physics of knockback:** deterministic custom trajectory (Smash-style: launch speed + decay + gravity, no physics engine) — not UE physics simulation. Doubly non-negotiable: feel reproducibility *and* rollback determinism (UE's physics engine is not deterministic across re-simulation).
+4. **The Rollback-Ready Simulation Contract** (⚖️ adopted at M0; write into `docs/specs/SIMULATION_CONTRACT.md` and quote in `CLAUDE.md`; every gameplay slice is bound by it):
+   - **Fixed-tick simulation, decoupled from rendering.** The game simulation advances in fixed 1/60s ticks driven by an accumulator, never by frame delta-time. Render interpolation smooths between sim ticks if needed. No gameplay value is ever multiplied by `DeltaTime`.
+   - **All gameplay state lives in one snapshot-able struct tree.** `FSimState` contains everything needed to re-simulate: per-fighter state (position, velocity, state-machine state + frame counter, damage, stocks, buffered inputs, hit/hurt flags, charge levels), all live projectiles, the match clock, and the RNG state. Target size: a few KB. If a gameplay-relevant value lives anywhere else — an actor property, a timer handle, an animation blueprint variable, a Niagara system — that is a contract violation and a lint error.
+   - **The simulation is a pure function:** `Simulate(FSimState, Inputs[2]) → FSimState`. No reads from engine time, no random calls outside the seeded sim RNG, no allocation-order dependence, no UE actor/component state reads. Actors are *puppets*: after each tick, presentation code reads the sim state and poses the world.
+   - **Save/load is first-class from day one.** `SaveState()`/`LoadState()` (memcpy-fast, no allocations in the hot path) exist in M0 and are exercised by the verification suite forever after (§2.7.4 `determinism_check`). Rollback in M7 is nothing more than: load an old state, re-simulate N ticks with corrected inputs — if save/load has been true since M0, M7 is netcode plumbing, not surgery.
+   - **Determinism hygiene:** single-platform float determinism is acceptable for v1 (PC-to-PC; same build = same results) — but avoid `sin/cos/pow` in gameplay paths where table lookups suffice, keep all sim math in one translation unit boundary with consistent compiler flags, and never iterate unordered containers in the sim. Cross-platform play, if ever wanted, upgrades this to fixed-point — a post-M7 decision, noted now so nobody is surprised.
+   - **Presentation is derived, disposable, and rollback-tolerant.** Animation poses are sampled *by sim frame index* (the frame-data architecture already guarantees this), so a rolled-back fighter simply re-poses. Effects, sounds, hit-stop presentation, and camera react to *sim events* emitted through a queue that M7 will gate on confirmation (§10.5). Accessory dynamics (§8.5) are pure presentation and live outside `FSimState` entirely.
 
 ## 2.6 The Frame Data Schema
 
@@ -366,6 +376,8 @@ The physical implementation of the Two-Minute Rule:
 - `silhouette_render`: automated black-and-white renders of any changed model, from gameplay distance, dropped into the queue.
 - `naming_lint`: asset prefixes and MoveID naming grammar (§2.2).
 - `build_check`: project compiles, `L_Gym` loads, PIE launches and survives 10 seconds with a scripted input sequence, log scraped for errors/warnings.
+- `determinism_check` (the §2.5.4 contract, made executable — runs on **every gameplay change from M1 onward**): (a) *replay test* — run a recorded 60-second input script twice from the same initial state, hash `FSimState` every tick, require identical hash streams; (b) *rollback rehearsal* — during the same replay, every 30 ticks save state, advance 7 ticks, load, re-simulate the same 7 ticks, and require the re-simulated hashes to match the originals. A failure bisects to the offending commit automatically (the hash streams are archived per build). This check is the M7 insurance policy: it means rollback correctness is proven continuously for months before any network code exists.
+- `sim_purity_lint`: static scan of gameplay sources for contract violations — `DeltaTime` in sim code, engine time reads, `FMath::Rand` outside the sim RNG, unordered container iteration in sim paths, gameplay state declared on actors/ABPs.
 
 ### 2.7.5 Capture harness
 
@@ -381,7 +393,9 @@ Every agent gameplay change ships with: compile pass, `L_Gym` PIE survival, rele
 - [ ] Directory + naming conventions applied; `naming_lint` runs clean
 - [ ] All `docs/specs/` files exist; `CLAUDE.md` updated; you have personally read and edited `GAME_CHARTER.md` and `REVIEW_PROTOCOL.md`
 - [ ] Version control live: LFS patterns verified (`git lfs ls-files` shows binaries), first clean clone tested on a fresh directory and the project opens
-- [ ] ⚖️ decisions recorded in `DECISIONS.md`: repo split, movement approach (may say "deciding in M1 by feel"), attack system, local-versus-v1, preview versioning
+- [ ] ⚖️ decisions recorded in `DECISIONS.md`: repo split, rollback-at-M7 with rollback-ready-core-from-M0 (charter), custom movement, bespoke attack state machine, preview versioning
+- [ ] `docs/specs/SIMULATION_CONTRACT.md` written (§2.5.4 in full) and quoted in `CLAUDE.md`
+- [ ] `FSimState` skeleton + `SaveState`/`LoadState` + fixed-tick loop exist and an empty-pawn `determinism_check` passes (the contract is enforced from the first slice, not adopted later)
 - [ ] `DT_FrameData_RRH` exists with schema §2.6 (rows may be placeholder)
 - [ ] Headless Blender harness: golden-file test passes end-to-end on your machine
 - [ ] Gen harness produces an image batch with metadata sidecars (test prompt)
@@ -503,7 +517,7 @@ Everything here is agent-implemented via `/ue5-implement`-style slices; you revi
 
 ## 5.2 Slice 2 — Attack State Machine + Hitboxes
 
-1. The state machine (§2.5): `Actionable → Startup → Active → Recovery → Actionable`, driven by frame counts from `DT_FrameData_RRH` rows `Jab1` and `FSmash` (Appendix C starting values). Frames counted in fixed 1/60s gameplay frames, independent of render hitches.
+1. The state machine (§2.5): `Actionable → Startup → Active → Recovery → Actionable`, driven by frame counts from `DT_FrameData_RRH` rows `Jab1` and `FSmash` (Appendix C starting values). Frames counted in fixed 1/60s simulation ticks, independent of render hitches, with all of it — state, frame counters, buffered inputs, hit flags, hit-stop freeze counters — living inside `FSimState` per the §2.5.4 contract. M1 is where the contract meets reality: every slice in this part runs `determinism_check` and `sim_purity_lint` before it reaches your queue.
 2. `HitboxComponent`: spawns shapes per `HitboxSpecs` on active frames, attached to skeleton sockets, overlap-tests against `Hurtbox` channel, resolves priority, reports hits exactly once per active window per target.
 3. Hurtbox setup on the pawn: capsule-per-body-region (3–5 capsules bound to bones — head, torso, legs; enough for high/low distinction later).
 4. Debug visualizer (from §2.7.4/`/Debug`): hitboxes red, hurtboxes cyan, active frames flash, frame counter and current state name on screen. This overlay appears in **every** gameplay review clip for the rest of the project.
@@ -538,6 +552,7 @@ Test with a second mannequin as training dummy in `L_Gym`:
 - [ ] Hitting the dummy is **satisfying** — this is subjective and it is the whole point; iterate hit-stop/spark/sound/flash until landing the smash makes you smile in an empty gray room. Budget real days for this. The project's quality ceiling is set here.
 - [ ] Whiffing feels honest: recovery reads as vulnerability, IASA makes the jab feel snappy
 - [ ] The reference clips (jab hit, jab whiff, FSmash charge-hit, FSmash whiff) are saved to `docs/specs/reference/M1/` — **this is now the One True Attack reference set** cited by every future manifest
+- [ ] `determinism_check` green on the full M1 build: replay test and rollback rehearsal pass with two fighters, hits, hit-stop, and knockback in the state stream (from here on this check runs on every gameplay change — a red determinism check blocks merge exactly like a failed compile)
 - [ ] `QUALITY_BARS.md` updated with anything you learned that the checklists missed
 
 ---
@@ -690,7 +705,7 @@ v1 facial = **8 expressions as pose assets**, not performance animation: neutral
 
 ## 8.5 Secondary Motion (cloth without Chaos Cloth)
 
-Accessory chains are driven by **joint-chain dynamics** (AnimDynamics node or KawaiiPhysics-class plugin — ⚖️ pick in this milestone, record it): per-chain stiffness/damping/gravity/wind tunables, simple capsule collision against thighs/torso only. Full cloth simulation is explicitly post-M6 (`DECISIONS.md`). Tune targets: Red's cloak should *trail* on dashes and *snap* on turnarounds (deception motif: the cloak lies about her momentum a half-beat behind the truth); Robin's feather is a constant small tell of his coiled energy. Verify with dash-dance and turnaround capture clips.
+Accessory chains are driven by **joint-chain dynamics** (AnimDynamics node or KawaiiPhysics-class plugin — ⚖️ pick in this milestone, record it): per-chain stiffness/damping/gravity/wind tunables, simple capsule collision against thighs/torso only. Full cloth simulation is explicitly post-M6 (`DECISIONS.md`). Contract note (§2.5.4): dynamics are pure presentation — they live outside `FSimState`, never touch a hitbox or gameplay value, and after an M7 rollback they simply re-settle over a few frames, which is visually fine because they trail reality by design. Tune targets: Red's cloak should *trail* on dashes and *snap* on turnarounds (deception motif: the cloak lies about her momentum a half-beat behind the truth); Robin's feather is a constant small tell of his coiled energy. Verify with dash-dance and turnaround capture clips.
 
 ## 8.6 GATE — Rig Complete (per character)
 
@@ -780,7 +795,16 @@ Platform-fighter framing camera (agent-built to this spec): frames all fighters 
 
 After a kit's animations gate-pass, one presentation slice per character: whoosh family scaled to move class (jab: air-tick; smash: cloth-heavy shear), hit sounds layered (universal thud + character layer: Red = wolf-adjacent snap on her heavy hits, Robin = arrow thunk/string notes), Niagara accents on identity moves only (Red's smashes get 3-frame claw-streak smears; Robin's arrows get restrained tracer + a *good* impact), charge loops (audio rise + particle shimmer that double as opponent information). Restraint audit closes the slice (`wiki: 035`): capture a 4-stock chaos scene — if effects ever make you lose a character, cut effect size/brightness until the character wins again. The fighter is always the brightest read.
 
-## 10.5 GATE — Integration Complete (per character)
+## 10.5 Rollback-Safe Presentation (the §2.5.4 contract's presentation half)
+
+Built now, exercised offline, cashed in at M7:
+
+1. **The sim event queue.** The simulation never calls presentation directly. Each tick it emits events (`HitLanded{move, target, knockback, position}`, `MoveStarted`, `ShieldBreak`, `KO`, …) tagged with their sim frame. Presentation systems (Niagara, audio, camera punch, hit-flash) consume the queue and are the *only* consumers.
+2. **Event lifecycle discipline:** effects triggered from events must be cheap to cancel or let expire (short-lived one-shot particles, sounds ≤ a few hundred ms for speculative-window events). In offline play the queue is trivially confirmed every tick, so nothing looks different — but the discipline means M7 can add "events from unconfirmed ticks are held N frames or cancelled on rollback" without touching any effect asset.
+3. **Poses from frame indices:** the ABP's montage position is driven by the sim's per-move frame counter (it already is, via the notify contract) — never by wall-clock montage playback that could drift from the sim. Verified by `sim_purity_lint` (no gameplay reads from ABP state) plus a visual check: pause the sim tick in PIE; the character must freeze mid-move perfectly.
+4. **Audio note for M7:** long tails (charge loops, victory stingers) key off *confirmed* states only; per-hit sounds are speculative-safe by rule 2. Recording this now costs one design sentence; discovering it in M7 costs an audio refactor.
+
+## 10.6 GATE — Integration Complete (per character)
 
 - [ ] ABP conforms to the shared template; facial layer reacts to game state; light flinches don't interrupt movement
 - [ ] `frame_audit` green over generated notifies; no hand-placed gameplay notify anywhere (script-verified)
@@ -800,7 +824,7 @@ Execute Parts 4.1–4.3 (his docs were drafted in Part 4; finalize), 6 (his kit:
 
 ## 11.2 The Projectile System (new engineering)
 
-Agent-built to spec: pooled projectile actors (arrows) with deterministic trajectories (custom gravity per charge tier, no physics engine — §2.5.3 applies to projectiles too), frame-data rows for each tier (arrows have startup/active/damage/knockback like any move; the *flight* is the active window), clank/priority rules vs. melee hitboxes (⚖️ decide: arrows beat jabs, trade with tilts, lose to smashes — or your own table; record it), arrow-vs-arrow behavior, stick-in-world presentation detail (arrows that miss embed in the stage briefly — cheap, characterful, cut if it ever costs a frame), and the bow micro-rig integration (§8.2: draw animation bends the bow, string bone tracks the hand — the single most identity-selling detail he has; `render the draw-release-wobble cycle as its own review clip`).
+Agent-built to spec: projectiles as entries in `FSimState`'s projectile array (the visible arrow actors are pooled puppets posed from sim data, per §2.5.4) with deterministic trajectories (custom gravity per charge tier, no physics engine — §2.5.3 applies to projectiles too), frame-data rows for each tier (arrows have startup/active/damage/knockback like any move; the *flight* is the active window), clank/priority rules vs. melee hitboxes (⚖️ decide: arrows beat jabs, trade with tilts, lose to smashes — or your own table; record it), arrow-vs-arrow behavior, stick-in-world presentation detail (arrows that miss embed in the stage briefly — cheap, characterful, cut if it ever costs a frame), and the bow micro-rig integration (§8.2: draw animation bends the bow, string bone tracks the hand — the single most identity-selling detail he has; `render the draw-release-wobble cycle as its own review clip`).
 
 ## 11.3 The First True Matchup
 
@@ -819,7 +843,7 @@ With both kits live, the game exists for the first time. Before M5's stage work,
 
 # Part 12 — Milestone M5: The Versus Slice
 
-**Purpose:** one real stage, complete match flow, and the first fully human playtests. This is where the project stops being a toybox and becomes a game.
+**Purpose:** one real stage, complete match flow, and the first fully human playtests — all offline (local versus). Online play arrives in M7 on top of this exact match flow, so everything built here (select, rules, KO ceremony, results, fast rematch) is built once and reused; nothing in this part is throwaway.
 
 ## 12.1 The Stage
 
@@ -873,7 +897,47 @@ Budget 2–3 hours *per character*, hands-on, on exactly three things — highes
 
 ## 13.4 After the Gate
 
-Only now: roster expansion (character 3 costs what the §11.1 stopwatch says, minus the pipeline-debt fixes), additional stages, modes, and marketing — which per `PRINCIPLES.md` (Marketing) means showing the real game as soon as it exists, painting an accurate picture: readable clips of real matches are the asset; the M5 capture harness already makes them.
+The next milestone is fixed by the charter: **M7, rollback netcode (Part 14)** — the game does not go on sale before it. Roster expansion (character 3 costs what the §11.1 stopwatch says, minus the pipeline-debt fixes), additional stages, and modes may run in parallel with M7 (they're different lanes — netcode touches the sim shell, content touches the pipeline), but marketing waits for M7: per `PRINCIPLES.md` (Marketing), you show the real game and paint an accurate picture, and for a platform fighter in this decade the real game includes online play. Readable clips of real matches are the marketing asset; the M5 capture harness already makes them.
+
+---
+
+# Part 14 — Milestone M7: Rollback Netcode
+
+**Purpose:** turn the rollback-ready core into shipping online play. Because the §2.5.4 contract has been enforced and `determinism_check` has been green since M1, this milestone is **netcode plumbing on a proven foundation**, not surgery on a finished game. That was the entire point of the contract. If at any step here you discover sim state living outside `FSimState`, stop and read the troubleshooting entry — the fix is upstream, not in the netcode.
+
+## 14.1 What Rollback Is (one paragraph, so notes stay precise)
+
+Both players run the full simulation locally. Remote inputs arrive late, so each tick the sim *predicts* them (repeat last input), and when real inputs arrive and differ, the sim **rolls back**: load the last confirmed `FSimState`, re-simulate the intervening ticks with corrected inputs, and present the new truth — all inside one render frame. Add a small fixed **input delay** (2–3 frames, tunable) so most corrections are ≤ 4–5 ticks and invisible. Everything M7 builds serves that loop.
+
+## 14.2 ⚖️ Build vs. Adopt
+
+Agents prototype both; you decide on evidence, recorded in `DECISIONS.md`:
+- **Adopt:** a GGPO-style session library or a UE rollback plugin (evaluate what's current and maintained at execution time). Buys: input packet management, sync protocol, frame-advantage logic — the fiddly, well-solved parts.
+- **Build:** the session layer is genuinely small *if* the sim contract held (the hard 90% — deterministic snapshot/resim — already exists and is yours either way).
+- Evaluation bar for adopting: the library must accept an opaque state buffer + tick callback (our architecture exactly), be license-compatible (`LICENSES.md`), and not demand engine-version lock-in. If nothing current passes, build.
+
+## 14.3 Implementation Sequence
+
+1. **Slice 1 — Local rollback stress.** No network at all: a test mode that *forces* rollbacks in offline play (every N ticks, artificially rewind R frames and re-sim with the real inputs). Ship criterion: with R=7 forced constantly, the game is visually indistinguishable from normal play and holds 60 fps. This finds every presentation-layer flaw (§10.5 discipline violations, effect double-fires, audio stutters, dynamics pops) with zero network variables. **Most of M7's debugging happens in this slice, deliberately.**
+2. **Slice 2 — Performance budget.** Measure and optimize until: `SaveState` ≤ 0.05 ms, single re-sim tick ≤ 0.4 ms, so a worst-case 7-frame rollback (save + 7 resims + repose) fits comfortably alongside rendering in the 16.6 ms frame. The §2.5.4 rules (compact state, no allocations, no engine reads) were chosen to make this achievable; the profiler now audits them.
+3. **Slice 3 — Two-instance sync.** Two game instances on one machine over localhost: input serialization, delay + prediction + rollback loop live, plus **desync detection** — exchange `FSimState` hashes every tick; on mismatch, dump both state streams and halt with diagnostics. Soak test: agent-scripted 30-minute matches with randomized inputs, zero desyncs.
+4. **Slice 4 — Real networks.** Session flow (direct connect first; matchmaking/relay infrastructure is a separate ⚖️ scope decision — direct + friend codes is a legitimate v1), artificial latency/jitter/loss harness (agents test the full matrix: 20–150 ms, 0–5% loss), then real cross-city matches.
+5. **Slice 5 — The player-facing layer.** Connection quality UI (ping + rollback-frames indicator, unobtrusive per `PRINCIPLES.md` UI rules), delay/rollback tuning exposed only as much as players need, disconnect/rage-quit handling, rematch flow at the same ≤3s bar as offline (§12.2 — respect for time doesn't stop online).
+
+## 14.4 Online Feel Verification (the part that isn't plumbing)
+
+Rollback protects *your own inputs'* responsiveness — that's why it's the genre standard — but corrections teleport the *opponent* slightly. Your director pass, on real 60–100 ms connections: does the opponent's motion still read? Do lead-ins still telegraph after a correction (a rolled-back smash startup must still give you its full remaining reaction window — verify with the frame counter)? Is hit-stop still crisp? Tune input delay vs. rollback window by feel, per connection quality tier. Then run §12.3-style naive playtests *online*: two players, two homes, say nothing. The bar: they describe the match, not the connection.
+
+## 14.5 GATE — M7 Complete (the ship gate)
+
+- [ ] Forced-rollback stress (R=7, continuous) visually clean at 60 fps
+- [ ] Perf budget met and profiled on min-spec hardware
+- [ ] 30-minute randomized soak: zero desyncs, across the latency/loss matrix
+- [ ] Real-network matches at 60/100/150 ms: playable, readable, honest telegraphs (frame-counted verification of remaining reaction windows after corrections)
+- [ ] Desync telemetry wired: any live desync produces an actionable state-diff report
+- [ ] Connection UI passes the naive test (players understand match quality without explanation)
+- [ ] Online naive playtests: descriptions are about the game, not the netcode
+- [ ] `determinism_check` archive shows unbroken green from M1 to ship — the receipt for the whole strategy
 
 ---
 
@@ -1012,6 +1076,10 @@ The wiki files this manual's rules are grounded in (paths under `sakurai-llm-wik
 
 **60 fps drops during effects-heavy moments.** Audit in order: Niagara overdraw (particle counts, transparency stacking), accessory dynamics substepping, texture streaming pool. The frame budget is a design law — cut effects before accepting drops (`wiki: 035` gives you the license).
 
+**`determinism_check` fails.** Bisect first (the archived hash streams point at the commit), then hunt the usual suspects in that diff: a `DeltaTime` leak, engine-time or `FMath::Rand` in sim code, gameplay state that migrated onto an actor or ABP, unordered container iteration, or uninitialized struct memory in a new `FSimState` field. Fix the violation, never quarantine the check — a tolerated red determinism check silently converts M7 from plumbing back into surgery.
+
+**M7 discovers sim state outside `FSimState`** (a rollback leaves some gameplay value stale). This is a §2.5.4 contract breach that `sim_purity_lint` missed: move the value into the state struct, add a lint rule that would have caught it, and re-run the forced-rollback stress. The fix is always upstream in the sim, never a patch inside the netcode layer.
+
 **Two sessions corrupted a binary asset.** You violated single-writer (§3.1). Restore from git, re-read the parallelization seams, and add the asset path to a session-lock note in `CLAUDE.md`.
 
 **A milestone gate has been 90% done for two weeks.** Classic. The remaining 10% is always a taste item you're avoiding. Book one review block, make the call, record it, move. Unresolved decisions are the solo-director failure mode — the wiki's whole Team Management category is Sakurai resolving things *now*.
@@ -1020,11 +1088,11 @@ The wiki files this manual's rules are grounded in (paths under `sakurai-llm-wik
 
 # Appendix F — Glossary
 
-**Active frames** — frames a hitbox can connect. **Anticipation/lead-in** — pre-hit portion of an attack animation; doubles as the opponent's telegraph. **Autocancel** — landing during specified aerial frames incurs only base landing lag. **Blast zone** — KO boundary. **Buffer** — inputs stored during non-actionable frames, executed at first opportunity. **Clank** — attack-vs-attack collision resolution. **Fast-fall** — player-triggered increased fall speed. **Follow-through** — post-hit recovery portion; where weight/vulnerability reads. **Frame** — 1/60 s. **Frame strip** — contact sheet of consecutive numbered frames. **Hitstop** — shared freeze on hit connection. **Hitstun** — victim's uncontrollable post-hit state. **IASA** — interruptible-as-soon-as frame. **Jump-squat** — grounded frames between jump input and liftoff. **Kit** — a character's full move set. **Lock-the-mesh** — the ban on regenerating an approved base model. **One True Attack** — the M1 reference slice all later work is diffed against. **Pose-sparse** — the property that fighting-game attacks are a few key poses plus timing, which is what makes agent authoring viable. **ROM reel** — range-of-motion rig-verification render. **Two-Minute Rule** — no deliverable may take >2 minutes to judge. **Vertical slice** — smallest end-to-end playable unit of work.
+**Active frames** — frames a hitbox can connect. **Anticipation/lead-in** — pre-hit portion of an attack animation; doubles as the opponent's telegraph. **Autocancel** — landing during specified aerial frames incurs only base landing lag. **Blast zone** — KO boundary. **Buffer** — inputs stored during non-actionable frames, executed at first opportunity. **Clank** — attack-vs-attack collision resolution. **Desync** — the fatal rollback failure: two clients' simulations diverge; detected by per-tick state hashing. **Determinism** — same state + same inputs → bit-identical next state, the property `determinism_check` enforces from M1. **Fast-fall** — player-triggered increased fall speed. **Follow-through** — post-hit recovery portion; where weight/vulnerability reads. **Frame** — 1/60 s. **Frame strip** — contact sheet of consecutive numbered frames. **Hitstop** — shared freeze on hit connection. **Hitstun** — victim's uncontrollable post-hit state. **IASA** — interruptible-as-soon-as frame. **Jump-squat** — grounded frames between jump input and liftoff. **Kit** — a character's full move set. **Lock-the-mesh** — the ban on regenerating an approved base model. **One True Attack** — the M1 reference slice all later work is diffed against. **Input delay** — fixed frames between input and simulation application; buys prediction headroom online. **Pose-sparse** — the property that fighting-game attacks are a few key poses plus timing, which is what makes agent authoring viable. **Rollback** — netcode model: predict remote inputs, and on misprediction reload a past state and re-simulate; requires the §2.5.4 contract. **ROM reel** — range-of-motion rig-verification render. **Sim event queue** — the one-way channel from simulation to presentation (§10.5). **Snapshot (`FSimState`)** — the single struct tree holding all gameplay state; save/load of it is what makes rollback possible. **Two-Minute Rule** — no deliverable may take >2 minutes to judge. **Vertical slice** — smallest end-to-end playable unit of work.
 
 ---
 
-*End of manual. The first command it asks of you is in §1.2: install the tools. The last is in §13.3: audit the bar. Everything between is a loop of specs, batches, notes, and gates — run it.*
+*End of manual. The first command it asks of you is in §1.2: install the tools. The last is in §14.5: ship it online. Everything between is a loop of specs, batches, notes, and gates — run it.*
 
 
 
