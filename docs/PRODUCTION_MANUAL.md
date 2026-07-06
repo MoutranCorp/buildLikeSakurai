@@ -111,15 +111,28 @@ Complete every section of this part before creating the Unreal project. Estimate
 
 ## 1.1 Hardware
 
-Minimum workstation for this pipeline (UE5 editor + headless Blender + local agent sessions running concurrently):
+**This project's actual workstation is a Gigabyte Aero X16 laptop** (RTX 5070 Laptop 8 GB · Ryzen AI 7 350 8c/16t or AI 9 HX 370 12c/24t · 16 or 32 GB DDR5 · 1 TB NVMe). Recorded here as ground truth: **it is sufficient for this project.** The manual's compute-heavy work is mostly *not* local — generative 3D, concept image generation, and agent inference are all cloud/API services where the local GPU is irrelevant — and the game itself is a stylized 60 fps title with two characters on one stage, far below what an RTX 5070 laptop renders comfortably. What the laptop changes is *workflow*, not feasibility. The subsections below list the reference spec (what a money-no-object desktop would look like), the deltas that matter, and the standing workflow rules that close each gap.
 
-- **CPU:** 12+ cores (agents will run headless Blender renders and UE builds in parallel with your editor session; core count matters more than clock).
-- **GPU:** NVIDIA RTX 3080-class or better, 10 GB+ VRAM. UE5 editor, 60 fps PIE with debug overlays, and turntable rendering all lean on it. If you ever run local image/3D generation models, 24 GB VRAM (4090/5090-class) pays for itself.
-- **RAM:** 64 GB. UE5 editor alone can sit at 20–30 GB with a mid-size project; headless Blender and browsers stack on top. 32 GB works but you will pay in swap stalls during reviews.
-- **Storage:** 2 TB NVMe SSD minimum. UE5 (~120 GB with debug symbols), DDC cache (~50–100 GB over time), the project with binary asset history, Blender working files, and rendered preview videos add up fast.
-- **Display:** whatever you have, plus the discipline to review gameplay at the *window size you actually play at*, not maximized — readability is judged at play conditions (`PRINCIPLES.md`, Clarity).
+### 1.1.1 Reference spec vs. the Aero X16 — the honest deltas
+
+- **CPU (8–12 laptop cores vs. 12–16 desktop):** affects UE C++ compile times and how many local jobs can run at once. Mitigation: §1.1.2 rule 1 (serialize heavy local work); compile times on a project this size (one small C++ module — most game logic; content is data) stay in the minutes, not tens of minutes.
+- **GPU (RTX 5070 Laptop, 8 GB VRAM vs. 10–16 GB desktop):** fine for the editor, PIE at 60, and turntable/preview rendering at this art style. The 8 GB ceiling only threatens local generative-model inference — which this pipeline does not do (API services instead, §1.2.8). Keep editor viewport resolution at 100% (no supersampling) and `L_Gym` stays trivially cheap.
+- **RAM (16 or 32 GB vs. 64 GB):** the one spec worth spending on. Per Notebookcheck's teardown review, the Aero X16's RAM is **socketed DDR5 SODIMM, upgradeable** — if the machine is the 16 GB configuration, upgrade to 32 GB (ideally 64 GB) before M0; it is the single cheapest productivity purchase in this manual. Until/unless upgraded: close the UE editor during Blender batch runs and vice versa (§1.1.2 rule 1 makes this automatic).
+- **Storage (1 TB vs. 2 TB):** genuinely tight — UE5 with symbols (~120 GB), DDC cache (50–100 GB over time), the LFS project, Blender working files, and preview videos will exhaust it mid-project. Fix now, pick one: (a) add/replace an M.2 drive if the chassis has a second slot or you're comfortable migrating (check the service manual), or (b) a 1–2 TB external NVMe over USB-C 3.2/USB4 for the DDC cache, LFS object store, ReviewQueue media, and gen-asset archives (all sequential-read-tolerant), keeping engine + active project on the internal drive. Set `UE-SharedDataCachePath` to the external explicitly.
+- **Thermals (laptop chassis vs. tower):** overnight batch renders and soak tests are sustained loads. Rules: run batches on AC power, performance profile, elevated on a stand or cooling pad, and configure batch scripts to run jobs **sequentially** — a laptop finishing 20 turntables one at a time overnight beats one throttling on 4-at-once and finishing no faster.
+
+### 1.1.2 Standing workflow rules for laptop-class hardware (write into `CLAUDE.md`)
+
+1. **One heavy local process at a time.** The batch harness (§2.7) runs local jobs (Blender renders, UE builds, Movie Render Queue captures) through a simple sequential queue, never in parallel with an open UE editor session. Agent *inference* is cloud-side and parallelizes freely — it's only local compute that serializes.
+2. **Overnight is the second shift.** Queue every render/generation/soak batch to run while you sleep (§3.1 already prescribes this); the laptop's slower batch throughput disappears inside hours you weren't using.
+3. **Storage hygiene is scheduled, not aspirational:** a monthly agent task prunes DDC, expired `Saved/` artifacts, and superseded gen-asset candidates (provenance sidecars are kept; heavy media of rejected candidates is archived to the external drive or deleted).
+4. **Cloud burst is the escape valve, not the default.** If a batch class genuinely outgrows the laptop (e.g., M7's latency-matrix soak tests, or mass turntable re-renders after an art-direction tweak), rent a GPU cloud VM by the hour for that batch class and record the recipe in `pipeline/`. Expected need before M7: none.
+5. **Frame audits trust the counter, not the eye, on this panel:** the 165 Hz display is set to a 60 Hz mode (or PIE hard-locked with `t.MaxFPS 60`) with VRR/FreeSync off during feel reviews and frame audits, so a dropped frame is visible as a dropped frame and burned-in frame counters stay truthful.
+
+### 1.1.3 Unchanged essentials
+
 - **Input:** a game controller (Xbox/PS/GameCube-style). You cannot give feel verdicts on keyboard. Buy two — Part 12 needs a second player.
-- **Frame timing:** a 60 Hz-capable display with VRR disabled during frame audits, so a dropped frame is visible as a dropped frame.
+- **Display discipline:** review gameplay at the *window size you actually play at*, not maximized — readability is judged at play conditions (`PRINCIPLES.md`, Clarity).
 
 ## 1.2 Software Installs, In Order
 
@@ -209,7 +222,7 @@ The folk characters are public domain; **specific famous depictions are not**. D
 
 ## 1.4 GATE — Prerequisites Complete
 
-- [ ] Workstation meets §1.1, controller(s) in hand
+- [ ] Workstation ready per §1.1: RAM config checked (16 GB → upgraded), storage plan executed (second M.2 or external NVMe configured, DDC path set), cooling stand + AC-power batch profile in place, controller(s) in hand
 - [ ] Git + LFS installed and working (`git lfs env` reports cleanly)
 - [ ] UE 5.x installed, version pinned and recorded; editor opens and PIE runs
 - [ ] Blender LTS installed; `blender --background --version` succeeds; version recorded
